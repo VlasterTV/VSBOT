@@ -25,6 +25,11 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+
+def log(*args) -> None:
+    """print() with forced flush — without it Render shows nothing (stdout is buffered)."""
+    print(*args, flush=True)
+
 # ======================================================================
 #  CONFIGURATION
 # ======================================================================
@@ -120,11 +125,12 @@ class VlasterBot(commands.Bot):
             try:
                 guild = discord.Object(id=int(GUILD_ID))
                 self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-                print(f"→ Commands synced to guild {GUILD_ID}.")
+                synced = await self.tree.sync(guild=guild)
+                log(f"→ {len(synced)} commands synced to guild {GUILD_ID}: "
+                    f"{', '.join('/' + c.name for c in synced)}")
                 synced_to_guild = True
             except discord.Forbidden:
-                print(
+                log(
                     "[CONFIG] Guild sync refused (Missing Access).\n"
                     f"         Either the bot is not in guild {GUILD_ID}, or it was invited\n"
                     "         without the 'applications.commands' scope.\n"
@@ -133,14 +139,15 @@ class VlasterBot(commands.Bot):
                     "         Falling back to a global sync."
                 )
             except ValueError:
-                print(f"[CONFIG] DISCORD_GUILD_ID is not a valid ID: {GUILD_ID!r}")
+                log(f"[CONFIG] DISCORD_GUILD_ID is not a valid ID: {GUILD_ID!r}")
 
         if not synced_to_guild:
             try:
-                await self.tree.sync()
-                print("→ Commands synced globally (up to 1h propagation delay).")
+                synced = await self.tree.sync()
+                log(f"→ {len(synced)} commands synced globally "
+                    "(up to 1h propagation delay).")
             except discord.HTTPException as exc:
-                print(f"[CONFIG] Global sync failed: {exc}")
+                log(f"[CONFIG] Global sync failed: {exc}")
 
 
 bot = VlasterBot()
@@ -148,7 +155,13 @@ bot = VlasterBot()
 
 @bot.event
 async def on_ready():
-    print(f"→ Logged in as {bot.user} ({bot.user.id})")
+    log(f"→ Logged in as {bot.user} ({bot.user.id})")
+    log(f"→ Present in {len(bot.guilds)} guild(s):")
+    for g in bot.guilds:
+        marker = "  ← DISCORD_GUILD_ID" if GUILD_ID and str(g.id) == GUILD_ID else ""
+        log(f"   • {g.name} — {g.id}{marker}")
+    if GUILD_ID and not any(str(g.id) == GUILD_ID for g in bot.guilds):
+        log(f"[CONFIG] WARNING: DISCORD_GUILD_ID={GUILD_ID} does not match any guild above.")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.playing, name="Fortnite • VlasterStudio"
@@ -1091,7 +1104,7 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         msg = "⛔ You don't have permission to use this command."
     else:
         msg = f"⚠️ Something went wrong: `{type(error).__name__}`"
-        print(f"[ERROR] {error!r}")
+        log(f"[ERROR] {error!r}")
     try:
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
@@ -1129,7 +1142,7 @@ def start_keepalive():
     port = int(os.getenv("PORT", "10000"))
     server = HTTPServer(("0.0.0.0", port), KeepAliveHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"→ Keepalive server started on port {port}")
+    log(f"→ Keepalive server started on port {port}")
 
 
 # ======================================================================
@@ -1149,7 +1162,7 @@ def main() -> None:
         )
 
     if not GUILD_ID:
-        print("[CONFIG] DISCORD_GUILD_ID missing: global sync (up to 1h delay).")
+        log("[CONFIG] DISCORD_GUILD_ID missing: global sync (up to 1h delay).")
 
     bot.run(TOKEN)
 
