@@ -117,8 +117,9 @@ class VlasterBot(commands.Bot):
         self.add_view(TicketPanelView())
         self.add_view(TicketControlView())
 
-        # Clear commands inherited from older code under this application
-        self.tree.clear_commands(guild=None)
+        # NOTE: never call self.tree.clear_commands(guild=None) here — it wipes the
+        # locally registered commands, leaving copy_global_to() nothing to copy and
+        # syncing 0 commands to the guild.
 
         synced_to_guild = False
         if GUILD_ID:
