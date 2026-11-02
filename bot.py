@@ -34,6 +34,12 @@ GUILD_ID = (os.getenv("DISCORD_GUILD_ID") or os.getenv("GUILD_ID") or "").strip(
 
 STUDIO_NAME = "VlasterStudio"
 
+# Studio logo shown on every embed.
+# Upload the image once to any Discord channel, right-click it → "Copy Link",
+# then paste that cdn.discordapp.com URL here (or set the LOGO_URL env var).
+# Leave empty to fall back to the server icon.
+LOGO_URL = os.getenv("LOGO_URL", "").strip()
+
 # --- Roles ---
 R_ADMIN = "👑 Admin"
 R_COWORKER = "🛠️ Co-Worker"
@@ -108,15 +114,33 @@ class VlasterBot(commands.Bot):
 
         # Clear commands inherited from older code under this application
         self.tree.clear_commands(guild=None)
-        await self.tree.sync()
 
+        synced_to_guild = False
         if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"→ Commands synced to guild {GUILD_ID}.")
-        else:
-            print("→ Commands synced globally (up to 1h propagation delay).")
+            try:
+                guild = discord.Object(id=int(GUILD_ID))
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                print(f"→ Commands synced to guild {GUILD_ID}.")
+                synced_to_guild = True
+            except discord.Forbidden:
+                print(
+                    "[CONFIG] Guild sync refused (Missing Access).\n"
+                    f"         Either the bot is not in guild {GUILD_ID}, or it was invited\n"
+                    "         without the 'applications.commands' scope.\n"
+                    "         Re-invite it from OAuth2 → URL Generator with BOTH\n"
+                    "         'bot' and 'applications.commands' ticked.\n"
+                    "         Falling back to a global sync."
+                )
+            except ValueError:
+                print(f"[CONFIG] DISCORD_GUILD_ID is not a valid ID: {GUILD_ID!r}")
+
+        if not synced_to_guild:
+            try:
+                await self.tree.sync()
+                print("→ Commands synced globally (up to 1h propagation delay).")
+            except discord.HTTPException as exc:
+                print(f"[CONFIG] Global sync failed: {exc}")
 
 
 bot = VlasterBot()
@@ -148,6 +172,26 @@ def is_staff(member: discord.Member) -> bool:
 
 def brand_embed(title: str, description: str = "", colour: int = C_BRAND) -> discord.Embed:
     return discord.Embed(title=title, description=description, colour=discord.Colour(colour))
+
+
+def logo_url(guild: Optional[discord.Guild] = None) -> Optional[str]:
+    """Studio logo if configured, otherwise the server icon."""
+    if LOGO_URL:
+        return LOGO_URL
+    if guild and guild.icon:
+        return guild.icon.url
+    return None
+
+
+def brand(embed: discord.Embed, guild: Optional[discord.Guild] = None,
+          footer: Optional[str] = None) -> discord.Embed:
+    """Applies the studio logo as thumbnail, and optionally a branded footer."""
+    url = logo_url(guild)
+    if url:
+        embed.set_thumbnail(url=url)
+    if footer:
+        embed.set_footer(text=footer, icon_url=url) if url else embed.set_footer(text=footer)
+    return embed
 
 
 async def log_event(guild: discord.Guild, embed: discord.Embed) -> None:
@@ -380,8 +424,7 @@ class TicketPanelView(discord.ui.View):
             f"{cfg['emoji']}  {cfg['label']}  •  Ticket #{number:04d}", cfg["intro"]
         )
         embed.set_footer(text=f"Opened by {member}", icon_url=member.display_avatar.url)
-        if guild.icon:
-            embed.set_thumbnail(url=guild.icon.url)
+        brand(embed, guild)
         embed.timestamp = discord.utils.utcnow()
 
         ping = role_coworker.mention if role_coworker else ""
@@ -520,6 +563,9 @@ async def on_member_join(member: discord.Member):
                 f"We're now **{guild.member_count}** in the studio.",
             )
             e.set_thumbnail(url=member.display_avatar.url)
+            url = logo_url(guild)
+            if url:
+                e.set_author(name=STUDIO_NAME, icon_url=url)
             try:
                 await channel.send(embed=e)
             except discord.HTTPException:
@@ -749,8 +795,6 @@ async def setup(interaction: discord.Interaction):
     })
     save_data(DATA)
 
-    icon = guild.icon.url if guild.icon else None
-
     # ------------------------------------------------------------------
     #  6. MESSAGES
     # ------------------------------------------------------------------
@@ -765,9 +809,7 @@ async def setup(interaction: discord.Interaction):
         "> 🛡️ Access is paused for a few minutes during unusual join activity\n"
         "> 🎮 You'll automatically receive the **Players** role",
     )
-    if icon:
-        e.set_thumbnail(url=icon)
-    e.set_footer(text="Anti-raid protection enabled")
+    brand(e, guild, footer="Anti-raid protection enabled")
     await ch_verif.send(embed=e, view=VerifyView())
 
     # --- Welcome ---
@@ -786,8 +828,7 @@ async def setup(interaction: discord.Interaction):
         "> **3.** Drop by general chat and say hi\n\n"
         "Have fun. 🎮",
     )
-    if icon:
-        e.set_thumbnail(url=icon)
+    brand(e, guild)
     await ch_welcome.send(embed=e)
 
     # --- Rules ---
@@ -826,9 +867,7 @@ async def setup(interaction: discord.Interaction):
         value="Discord's [Terms of Service](https://discord.com/terms) apply. 13+ only.",
         inline=False,
     )
-    if icon:
-        e.set_thumbnail(url=icon)
-    e.set_footer(text="Staff may sanction any disruptive behaviour.")
+    brand(e, guild, footer="Staff may sanction any disruptive behaviour.")
     await ch_rules.send(embed=e)
 
     # --- Announcements ---
@@ -838,8 +877,7 @@ async def setup(interaction: discord.Interaction):
         "updates, events and giveaways.\n\n"
         "Turn on notifications for this channel so you don't miss anything.",
     )
-    if icon:
-        e.set_thumbnail(url=icon)
+    brand(e, guild)
     await ch_news.send(embed=e)
 
     # --- Code drop ---
@@ -853,8 +891,7 @@ async def setup(interaction: discord.Interaction):
         "> **4.** Start the game\n\n"
         "Found a bug or got feedback on a map? Open a ticket — it helps us a lot.",
     )
-    if icon:
-        e.set_thumbnail(url=icon)
+    brand(e, guild)
     await ch_codes.send(embed=e)
 
     # --- Ticket panel ---
@@ -876,9 +913,7 @@ async def setup(interaction: discord.Interaction):
         "> 🔒 Your ticket is only visible to you and the staff\n"
         "> ⚠️ One open ticket at a time",
     )
-    if icon:
-        e.set_thumbnail(url=icon)
-    e.set_footer(text="Pick a reason from the menu below ⬇️")
+    brand(e, guild, footer="Pick a reason from the menu below ⬇️")
     await ch_open.send(embed=e, view=TicketPanelView())
 
     # --- Staff ---
@@ -895,8 +930,7 @@ async def setup(interaction: discord.Interaction):
         "`/lockdown` — toggles anti-raid protection mode\n"
         "`/clear` — bulk-deletes messages",
     )
-    if icon:
-        e.set_thumbnail(url=icon)
+    brand(e, guild)
     await ch_staff.send(embed=e)
 
     await interaction.followup.send(
@@ -921,8 +955,7 @@ async def panel(interaction: discord.Interaction):
         "📩  OPEN A TICKET",
         "Pick a reason from the menu below to open a private channel with the team.",
     )
-    if interaction.guild.icon:
-        e.set_thumbnail(url=interaction.guild.icon.url)
+    brand(e, interaction.guild)
     await interaction.channel.send(embed=e, view=TicketPanelView())
     await interaction.response.send_message("✅ Panel sent.", ephemeral=True)
 
@@ -934,8 +967,7 @@ async def verifypanel(interaction: discord.Interaction):
         "🔓  SERVER ACCESS",
         "Click the button below to join the community.",
     )
-    if interaction.guild.icon:
-        e.set_thumbnail(url=interaction.guild.icon.url)
+    brand(e, interaction.guild)
     await interaction.channel.send(embed=e, view=VerifyView())
     await interaction.response.send_message("✅ Panel sent.", ephemeral=True)
 
@@ -959,8 +991,7 @@ async def announce(
 
     target = channel or interaction.channel
     e = brand_embed(f"📣  {title}", message.replace("\\n", "\n"))
-    if interaction.guild.icon:
-        e.set_thumbnail(url=interaction.guild.icon.url)
+    brand(e, interaction.guild)
     e.set_footer(text=f"Posted by {interaction.user.display_name}",
                  icon_url=interaction.user.display_avatar.url)
     e.timestamp = discord.utils.utcnow()
@@ -1001,9 +1032,7 @@ async def drop(
         + f"**Island code**\n```\n{code}\n```\n"
         "Search this code in Fortnite's **Discover** tab to launch the map.",
     )
-    if interaction.guild.icon:
-        e.set_thumbnail(url=interaction.guild.icon.url)
-    e.set_footer(text=f"{STUDIO_NAME} • Have fun")
+    brand(e, interaction.guild, footer=f"{STUDIO_NAME} • Have fun")
     e.timestamp = discord.utils.utcnow()
 
     await target.send(
